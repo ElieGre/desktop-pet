@@ -1,0 +1,7 @@
+bin/
+obj/
+.vs/
+*.user
+
+# Regenerable Nano Banana scratch state (duplicates the images already in output/*.png)
+tools/nanobanana/conversation.json
