@@ -8,32 +8,54 @@ using Application = System.Windows.Application;
 
 namespace DesktopPet;
 
-public partial class MainWindow : Window
+/// <summary>
+/// The pet itself: a transparent, click-through, always-on-top window that walks the
+/// taskbar. Everything species-specific comes from the <see cref="PetProfile"/> it is
+/// constructed with, so each pet is just a profile plus its own sprite sheets.
+/// </summary>
+public partial class PetWindow : Window
 {
     private const int TickMs = 130;
-    private const int FeetSinkIntoTaskbar = 0; // negative raises the pet above the taskbar's top edge
+
+    private readonly PetProfile _profile;
 
     private SpriteAnimator _idleAnimator = null!;
     private SpriteAnimator _walkAnimator = null!;
+    private SpriteAnimator? _specialAnimator;
     private PetStateMachine _pet = null!;
     private DispatcherTimer _timer = null!;
     private NotifyIcon? _trayIcon;
     private PetState _lastState = PetState.Idle;
 
-    public MainWindow()
+    public PetWindow(PetProfile profile)
     {
+        _profile = profile;
         InitializeComponent();
+
+        Title = profile.DisplayName;
+        Width = profile.FrameWidth;
+        Height = profile.FrameHeight;
+
         Loaded += OnLoaded;
         Closed += OnClosed;
     }
 
+    /// <summary>
+    /// Sprite sheets live in the *executable's* Assets/Sprites folder (no ";component"
+    /// segment), so each pet exe ships only its own art even though this window lives
+    /// in the shared library.
+    /// </summary>
     private static Uri PackUri(string fileName) =>
         new($"pack://application:,,,/Assets/Sprites/{fileName}", UriKind.Absolute);
 
+    private static SpriteAnimator Animator(SpriteSheet sheet) =>
+        new(PackUri(sheet.FileName), sheet.FrameCount, sheet.TicksPerFrame);
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _idleAnimator = new SpriteAnimator(PackUri("croc_idle.png"), frameCount: 4, ticksPerFrame: 7);
-        _walkAnimator = new SpriteAnimator(PackUri("croc_walk.png"), frameCount: 4, ticksPerFrame: 2);
+        _idleAnimator = Animator(_profile.Idle);
+        _walkAnimator = Animator(_profile.Walk);
+        _specialAnimator = _profile.Special is { } special ? Animator(special) : null;
 
         var hwnd = new WindowInteropHelper(this).Handle;
         Win32.MakeClickThrough(hwnd);
@@ -41,9 +63,13 @@ public partial class MainWindow : Window
         var taskbar = TaskbarTracker.GetBounds();
         var startX = taskbar.Left + (taskbar.Width - Width) / 2;
         Left = startX;
-        Top = taskbar.Top - Height + FeetSinkIntoTaskbar;
+        Top = taskbar.Top - Height + _profile.FeetSinkIntoTaskbar;
 
-        _pet = new PetStateMachine(startX);
+        _pet = new PetStateMachine(
+            startX,
+            _profile.WalkSpeedPxPerTick,
+            specialTicks: _profile.Special?.LoopTicks ?? 0,
+            specialChance: _profile.SpecialChance);
         PetImage.Source = _idleAnimator.CurrentFrame;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(TickMs) };
@@ -61,11 +87,17 @@ public partial class MainWindow : Window
 
         _pet.Tick(minX, maxX);
         Left = _pet.X;
-        Top = taskbar.Top - Height + FeetSinkIntoTaskbar;
+        Top = taskbar.Top - Height + _profile.FeetSinkIntoTaskbar;
 
         FlipTransform.ScaleX = _pet.Facing == FacingDirection.Left ? -1 : 1;
 
-        var animator = _pet.State == PetState.Walk ? _walkAnimator : _idleAnimator;
+        var animator = _pet.State switch
+        {
+            PetState.Walk => _walkAnimator,
+            PetState.Special => _specialAnimator ?? _idleAnimator,
+            _ => _idleAnimator,
+        };
+
         if (_pet.State != _lastState)
         {
             animator.Reset();
@@ -85,7 +117,7 @@ public partial class MainWindow : Window
         {
             Icon = System.Drawing.SystemIcons.Application,
             Visible = true,
-            Text = "Desktop Pet Crocodile",
+            Text = _profile.DisplayName,
         };
 
         var menu = new ContextMenuStrip();
@@ -93,20 +125,20 @@ public partial class MainWindow : Window
         var startupItem = new ToolStripMenuItem("Start with Windows")
         {
             CheckOnClick = true,
-            Checked = StartupManager.IsEnabled(),
+            Checked = StartupManager.IsEnabled(_profile),
         };
         startupItem.Click += (_, _) =>
         {
-            if (!StartupManager.CanManageStartup())
+            if (!StartupManager.CanManageStartup(_profile))
             {
                 startupItem.Checked = !startupItem.Checked;
                 System.Windows.MessageBox.Show(
-                    "Start-with-Windows only works when running the built DesktopPet.exe directly, not via 'dotnet run'.",
-                    "Desktop Pet Crocodile");
+                    $"Start-with-Windows only works when running the built {_profile.ExeName}.exe directly, not via 'dotnet run'.",
+                    _profile.DisplayName);
                 return;
             }
 
-            StartupManager.SetEnabled(startupItem.Checked);
+            StartupManager.SetEnabled(_profile, startupItem.Checked);
         };
         menu.Items.Add(startupItem);
         menu.Items.Add(new ToolStripSeparator());

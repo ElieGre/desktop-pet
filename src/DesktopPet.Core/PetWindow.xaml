@@ -1,8 +1,8 @@
-<Window x:Class="DesktopPet.MainWindow"
+<!-- Width/Height are set from the PetProfile in the constructor. -->
+<Window x:Class="DesktopPet.PetWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Desktop Pet"
-        Width="191" Height="64"
         WindowStyle="None"
         ResizeMode="NoResize"
         AllowsTransparency="True"
